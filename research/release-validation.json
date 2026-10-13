@@ -4,7 +4,10 @@
   "date": "2026-10-13",
   "publication": {
     "repository": "https://github.com/gearashi/KryptosSolverK4AndK5",
-    "status": "validated; publication pending"
+    "status": "published; source commit verified on remote main",
+    "verified_source_commit": "9fa53c468689b916c04eb4231c33924a0fc9e6e6",
+    "verified_at_utc": "2026-10-13T19:46:45.435671+00:00",
+    "verification": "git ls-remote origin refs/heads/main equals local git rev-parse HEAD after push; later metadata commit records this verification without changing tested source"
   },
   "historical_release": "research/runs/release-L-002/release-validation.json",
   "fresh_checkout": {

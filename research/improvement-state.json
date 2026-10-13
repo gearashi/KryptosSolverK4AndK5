@@ -1,7 +1,7 @@
 {
   "schema": "kryptos.improvement-ledger.v1",
   "created_date": "2026-10-13",
-  "phase": "M-all-nine-and-recursive-integration",
+  "phase": "M-complete-published-verified",
   "goal_controller": "parent persistent goal; no scheduled automation",
   "allowed_statuses": [
     "proposed",
@@ -20,7 +20,7 @@
     "scope": "No remaining accepted actionable improvement after a complete post-integration review; usable local CPU/GPU app and reviewed publication package delivered.",
     "not_a_claim": "Global algorithmic optimality, exhaustive coverage of unknown Kryptos methods, or a verified decipherment.",
     "final_review_complete": true,
-    "publication_complete": false,
+    "publication_complete": true,
     "reviewed_actionable_backlog_complete": true
   },
   "entries": [
@@ -870,16 +870,17 @@
         "Both canonical M002 audits pass with unchanged execution input hashes.",
         "This closes the reviewed implementation backlog, not the open mathematical problem or all possible future improvements."
       ],
-      "remaining_delivery": "GitHub publication and remote verification."
+      "remaining_delivery": null
     }
   ],
   "delivery": {
     "repository": "https://github.com/gearashi/KryptosSolverK4AndK5",
-    "verified_source_commit": "9e78a343abb985c9c32aaafdeb3335b077623ade",
+    "verified_source_commit": "9fa53c468689b916c04eb4231c33924a0fc9e6e6",
     "local_url": "http://127.0.0.1:8767/",
     "startup": "OpenDashboard.cmd",
     "state_at_delivery": "Idle; CUDA compiled readiness probe succeeded; no run or campaign active; app version 0.2.0",
-    "remaining": "GitHub publication and remote verification."
+    "remaining": null,
+    "verified_at_utc": "2026-10-13T19:46:45.435671+00:00"
   },
   "historical_phase_L_termination": {
     "scope": "No remaining accepted actionable improvement after a complete post-integration review; usable local CPU/GPU app and reviewed publication package delivered.",
