@@ -1,8 +1,8 @@
 """Bounded, paged CPU/CUDA scanning of exact general/scheduled affine families.
 
-CPU selection uses integer products. CUDA selection uses float64 log scores;
-every shortlisted candidate is rescored exactly and literally replayed on CPU.
-CUDA ranking is approximate even though its letter arithmetic is integer-exact.
+CPU selection uses integer products. Certified CUDA uses integer interval sums
+and CPU exact comparison of every candidate that might cross the cutoff.
+Approximate float64 shortlisting remains an explicit opt-in mode.
 """
 from functools import lru_cache
 from copy import deepcopy
@@ -60,13 +60,18 @@ def _prepare(serialized, model_sha, source_sha):
     job = _optimization_job(json.loads(serialized), _target)
     if job["model_sha256"] != model_sha:
         raise ValueError("scoring model changed while preparing scan; retry with a stable file")
+    if job["solution"] is not None and job["solution"].feasible:
+        job["accelerated_affine"] = job["solution"].affine_plaintext()
+        job["accelerated_scoring"] = _scoring(job,job["accelerated_affine"])
+        job["cuda_static"] = {}
     return job
 
 
 def _scoring(job, affine):
     model, alphabet = job["model"], affine["alphabet"]
+    mask = set(job.get("score_mask",job["known"]))
     starts = [i for i in range(len(affine["base"])-model.order+1)
-              if all(j not in job["known"] for j in range(i, i+model.order))]
+              if all(j not in mask for j in range(i, i+model.order))]
     indices = {c: i for i, c in enumerate(alphabet)}
     codes = {}
     for gram, count in model.counts.items():
@@ -158,6 +163,27 @@ extern "C" __global__ void score(const unsigned char* text, const int* starts,
     scores[row] = total;
 }
 extern "C" __global__ void readiness(int* out) { out[0] = 7*6; }
+extern "C" __global__ void interval_score(const unsigned char* text, const int* starts,
+    const unsigned long long* codes, const unsigned long long* low_table,
+    const unsigned long long* high_table, unsigned long long unseen_low,
+    unsigned long long unseen_high, unsigned long long* lower,
+    unsigned long long* upper, int n, int batch, int windows, int order, int observed) {
+    int row = blockDim.x * blockIdx.x + threadIdx.x;
+    if (row >= batch) return;
+    unsigned long long low_total=0, high_total=0;
+    for (int w=0; w<windows; ++w) {
+        unsigned long long code=0;
+        for (int j=0; j<order; ++j) code=code*26+text[row*n+starts[w]+j];
+        int low=0, high=observed;
+        while (low<high) { int mid=low+(high-low)/2;
+            if (codes[mid]<code) low=mid+1; else high=mid; }
+        bool found=low<observed && codes[low]==code;
+        low_total += found ? low_table[low] : unseen_low;
+        high_total += found ? high_table[low] : unseen_high;
+    }
+    lower[row]=low_total;
+    upper[row]=high_total;
+}
 '''
 
 
@@ -165,7 +191,7 @@ extern "C" __global__ void readiness(int* out) { out[0] = 7*6; }
 def _kernels(device_id):
     import cupy as cp
     module = cp.RawModule(code=CUDA_SOURCE, options=("--std=c++11",))
-    return {name: module.get_function(name) for name in ("coordinates", "letters", "score", "readiness")}
+    return {name: module.get_function(name) for name in ("coordinates", "letters", "score", "interval_score", "readiness")}
 
 
 def probe_backend():
@@ -195,11 +221,15 @@ def probe_backend():
     return result
 
 
-def _cuda_rank(affine, job, offset, count, keep, scoring):
+def _cuda_tables(affine,job,scoring,ranking_mode):
+    """Per-family/device immutable arrays survive pages in persistent workers."""
     import cupy as cp
-    import numpy as np
-    n, d = len(affine["base"]), len(affine["domains"])
-    starts, codes, _, _ = scoring
+    from .certified_scores import log2_interval
+    device=cp.cuda.Device().id
+    key=(device,ranking_mode)
+    if key in job["cuda_static"]:
+        return job["cuda_static"][key],True
+    starts,codes,p,q=scoring
     model = job["model"]
     index = {c: i for i, c in enumerate(affine["alphabet"])}
     encoded_logs = {}
@@ -210,25 +240,60 @@ def _cuda_rank(affine, job, offset, count, keep, scoring):
         encoded_logs[code] = value
     observed = sorted(codes)
     arrays = [cp.asarray(value, dtype=dtype) for value, dtype in (
-        (_digits(offset, affine["domains"]), cp.uint8), (affine["domains"], cp.uint8),
+        (affine["domains"], cp.uint8),
         (affine["base"], cp.uint8), (affine["columns"], cp.uint8),
         (starts, cp.int32), (observed, cp.uint64), ([encoded_logs[c] for c in observed], cp.float64))]
-    origin, domains, base, columns, windows, gram_codes, logs = arrays
+    tables={"arrays":arrays,"observed":len(observed)}
+    if ranking_mode=="certified":
+        bounds=[log2_interval(codes[code]*q+p) for code in observed]
+        unseen=log2_interval(p)
+        maximum=max([unseen[1]]+[bound[1] for bound in bounds])
+        if maximum*len(starts)>2**64-1:
+            raise ValueError("certified GPU interval sum would exceed uint64")
+        tables.update(low=cp.asarray([a for a,b in bounds],dtype=cp.uint64),
+                      high=cp.asarray([b for a,b in bounds],dtype=cp.uint64),unseen=unseen)
+    job["cuda_static"][key]=tables
+    return tables,False
+
+
+def _cuda_rank(affine, job, offset, count, keep, scoring,ranking_mode="certified"):
+    import cupy as cp
+    import numpy as np
+    from .certified_scores import FRACTIONAL_BITS,overlapping_indices
+    n,d=len(affine["base"]),len(affine["domains"])
+    starts,codes,_,_=scoring
+    model=job["model"]
+    tables,cache_hit=_cuda_tables(affine,job,scoring,ranking_mode)
+    domains,base,columns,windows,gram_codes,logs=tables["arrays"]
+    origin=cp.asarray(_digits(offset,affine["domains"]),dtype=cp.uint8)
     values = cp.empty((count, d), dtype=cp.uint8)
     text = cp.empty((count, n), dtype=cp.uint8)
-    scores = cp.empty(count, dtype=cp.float64)
     kernels = _kernels(cp.cuda.Device().id)
     args = lambda *xs: tuple(np.int32(x) for x in xs)
     kernels["coordinates"](((count+127)//128,), (128,), (origin, domains, values, *args(d, count)))
     kernels["letters"](((count*n+127)//128,), (128,), (base, columns, values, text, *args(n, d, count)))
-    kernels["score"](((count+127)//128,), (128,), (text, windows, gram_codes, logs,
-        np.float64(model._unknown_log_probability), scores, *args(n, count, len(starts), model.order, len(observed))))
-    raw_scores = scores.get().tolist()
-    if any(not math.isfinite(x) for x in raw_scores):
-        raise RuntimeError("CUDA returned nonfinite ranking scores")
-    # Oversampling reduces floating-cutoff sensitivity without claiming exact selection.
-    pool = min(count, max(64, keep*4))
-    selected = heapq.nsmallest(pool, range(count), key=lambda i: (-raw_scores[i], i))
+    certification={"mode":ranking_mode,"immutable_device_cache_hit":cache_hit}
+    if ranking_mode=="certified":
+        lower=cp.empty(count,dtype=cp.uint64)
+        upper=cp.empty(count,dtype=cp.uint64)
+        kernels["interval_score"](((count+127)//128,),(128,),(text,windows,gram_codes,tables["low"],tables["high"],
+            np.uint64(tables["unseen"][0]),np.uint64(tables["unseen"][1]),lower,upper,
+            *args(n,count,len(starts),model.order,tables["observed"])))
+        lower_values,upper_values=lower.get().tolist(),upper.get().tolist()
+        selected,threshold=overlapping_indices(lower_values,upper_values,keep)
+        pool=len(selected)
+        certification.update(method="integer outward-rounded log2 intervals plus exact CPU overlap comparison",
+            fractional_bits=FRACTIONAL_BITS,threshold_lower_hex=hex(threshold),interval_candidates=pool,
+            eliminated_candidates=count-pool,max_interval_width_hex=hex(max(b-a for a,b in zip(lower_values,upper_values))))
+    else:
+        scores=cp.empty(count,dtype=cp.float64)
+        kernels["score"](((count+127)//128,), (128,), (text, windows, gram_codes, logs,
+            np.float64(model._unknown_log_probability), scores, *args(n, count, len(starts), model.order,tables["observed"])))
+        raw_scores = scores.get().tolist()
+        if any(not math.isfinite(x) for x in raw_scores):
+            raise RuntimeError("CUDA returned nonfinite ranking scores")
+        pool = min(count, max(64, keep*4))
+        selected = heapq.nsmallest(pool, range(count), key=lambda i: (-raw_scores[i], i))
     actual_letters = text[cp.asarray(selected, dtype=cp.int32)].get().tolist()
     exact = []
     for local, gpu_letters in zip(selected, actual_letters):
@@ -240,10 +305,11 @@ def _cuda_rank(affine, job, offset, count, keep, scoring):
         exact.append((_objective(expected, starts, model.order, *scoring[1:]), offset+local,
                       "".join(affine["alphabet"][x] for x in expected)))
     exact.sort(key=lambda item: (-item[0], item[2], item[1]))
-    return [(score, index) for score, index, word in exact[:keep]], pool
+    certification["exact_scored_candidates"]=pool
+    return [(score, index) for score, index, word in exact[:keep]], pool,certification
 
 
-def scan_batch(request, backend="cpu", offset=0, batch_size=1024, top=10):
+def scan_batch(request, backend="cpu", offset=0, batch_size=1024, top=10,ranking_mode="certified"):
     """Scan [offset,next_offset), not the entire family; resume using next_offset.
 
     Explicit CUDA failure raises RuntimeError; ``auto`` alone permits CPU fallback.
@@ -253,12 +319,14 @@ def scan_batch(request, backend="cpu", offset=0, batch_size=1024, top=10):
     started = time.perf_counter()
     if backend not in ("cpu", "cuda", "auto"):
         raise ValueError("backend must be cpu, cuda or auto")
+    if ranking_mode not in ("certified","approximate"):
+        raise ValueError("ranking_mode must be certified or approximate")
     _integer(offset, "offset", 0)
     _integer(batch_size, "batch_size", 1, MAX_BATCH)
     _integer(top, "top", 1, 100)
     from .next_cli import BASE, LINEAR_LIMITS, SEARCH_LIMITS, _check, _verify
     from .advanced_cli import _candidate
-    _check(request, BASE | LINEAR_LIMITS | SEARCH_LIMITS | {"stages", "alphabet", "cells", "layer_model", "model_path"})
+    _check(request, BASE | LINEAR_LIMITS | SEARCH_LIMITS | {"stages", "alphabet", "cells", "layer_model", "model_path","score_mask"})
     path = request.get("model_path")
     if not isinstance(path, str):
         raise ValueError("an explicit frozen model_path is required")
@@ -271,13 +339,14 @@ def scan_batch(request, backend="cpu", offset=0, batch_size=1024, top=10):
     job = _prepare(_canonical(normalized), model_sha, _hash(_canonical(source_hashes).encode()))
     result = {"schema": SCHEMA, "target": job["target"], "candidates": [], "offset": offset,
         "offset_decimal": str(offset), "evaluated": 0, "backend_requested": backend, "backend_used": None,
+        "ranking_mode":ranking_mode,
         "authenticated_solution": False, "model_file_sha256": model_sha, "model_id": job["model"].model_id,
         "phase_provenance": deepcopy(job["phase_provenance"]), "source_sha256": source_hashes,
         "request_sha256": _hash(_canonical(request).encode()), "supplied_request": request,
         "bounds": {"batch_size": batch_size, "top": top, "max_letter_operations": MAX_LETTER_OPERATIONS,
                    "max_window_evaluations": MAX_WINDOWS, "max_score_bits": MAX_SCORE_BITS},
         "paging_convention": "F2 coordinates then F13; rightmost coordinate fastest. complete means page reaches family end; no earlier coverage is implied.",
-        "score_interpretation": "Frozen joint ngram ranking with every window touching a supplied crib excluded. Scores and re-encryption never authenticate plaintext."}
+        "score_interpretation": "Frozen joint ngram ranking excludes every window touching the explicit score mask, which includes all supplied crib positions. Scores and re-encryption never authenticate plaintext."}
     if job["algebra_budget"] is not None:
         result.update(feasible=None, total=None, total_decimal=None, complete=False, next_offset=offset,
                       next_offset_decimal=str(offset), stop_reason="algebra_budget", algebra=deepcopy(job["algebra_budget"]))
@@ -293,15 +362,16 @@ def scan_batch(request, backend="cpu", offset=0, batch_size=1024, top=10):
     if not solution.feasible or not count:
         result.update(stop_reason="exact_contradiction" if not solution.feasible else "end_of_family", elapsed_seconds=time.perf_counter()-started)
         return result
-    affine = solution.affine_plaintext()
-    scoring = _scoring(job, affine)
+    affine = job["accelerated_affine"]
+    scoring = job["accelerated_scoring"]
     starts, codes, p, q = scoring
     operations = count*len(affine["base"])*(len(affine["domains"])+1)
     if operations > MAX_LETTER_OPERATIONS or count*len(starts) > MAX_WINDOWS:
         raise ValueError("batch exceeds the work cap; request a smaller batch_size")
     if len(starts)*(max(codes.values())*q+p).bit_length() > MAX_SCORE_BITS:
         raise ValueError("frozen model/text exceeds exact score bit cap")
-    result["scoring"] = {"windows": len(starts), "excluded_positions": sorted(job["known"]),
+    score_mask=job.get("score_mask",job["known"])
+    result["scoring"] = {"windows": len(starts), "excluded_positions": sorted(score_mask),
         "window_starts": starts, "score_available": bool(starts), "exact_objective": "product(count*q+p)",
         "p_hex": hex(p), "q_hex": hex(q), "denominator_common_within_model_mask_family": True}
     used = backend
@@ -312,7 +382,8 @@ def scan_batch(request, backend="cpu", offset=0, batch_size=1024, top=10):
             result["fallback_reason"] = readiness["cuda"].get("error", "CUDA unavailable")
     if used == "cuda":
         try:
-            ranked, rescored = _cuda_rank(affine, job, offset, count, min(top, count), scoring)
+            ranked, rescored,certification = _cuda_rank(affine, job, offset, count, min(top, count), scoring,ranking_mode)
+            result["certification"]=certification
         except Exception as exc:
             if backend != "auto":
                 raise RuntimeError(f"CUDA scan failed: {exc}") from exc
@@ -323,8 +394,8 @@ def scan_batch(request, backend="cpu", offset=0, batch_size=1024, top=10):
         rescored = count
         result["work"] = {"incremental_letter_updates": changed}
     result.update(backend_used=used, evaluated=count, stop_reason="page_complete", cpu_exact_scored=rescored,
-        ranking_exact_within_page=used=="cpu" or rescored==count,
-        ranking_method="exact integer product" if used=="cpu" else "CUDA float64 shortlist followed by CPU exact rescoring",
+        ranking_exact_within_page=used=="cpu" or ranking_mode=="certified" or rescored==count,
+        ranking_method="exact integer product" if used=="cpu" else ("CUDA certified interval filtering followed by CPU exact comparison" if ranking_mode=="certified" else "CUDA float64 shortlist followed by CPU exact rescoring"),
         ranking_scope="this page only; merge separately across pages with the same request/model/source hashes")
     for objective, index in ranked:
         values = _digits(index, affine["domains"])
@@ -334,7 +405,7 @@ def scan_batch(request, backend="cpu", offset=0, batch_size=1024, top=10):
         candidate = _verify(candidate, job["text"], job["known"])
         from .score_sensitivity import report as sensitivity_report
         candidate["score_sensitivity"] = sensitivity_report(solution,job["model"],candidate["plaintext"],job["known"])
-        display_score = job["model"].score(candidate["plaintext"], job["known"]).to_dict()
+        display_score = job["model"].score(candidate["plaintext"], score_mask).to_dict()
         candidate.update(index=index, index_decimal=str(index), assignment_index_decimal=str(index),
             exact_objective_hex=hex(objective), score_exact=hex(objective), score=display_score["mean_log_probability"],
             display_model_score=display_score,

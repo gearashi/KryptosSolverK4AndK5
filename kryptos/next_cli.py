@@ -1,6 +1,7 @@
 """Checkpoint-K interfaces for linked cipher constraints and resumable search."""
 import hashlib
 import json
+import math
 from pathlib import Path
 import time
 
@@ -11,7 +12,7 @@ from .replay_expanded import replay_expanded
 ROOT=Path(__file__).resolve().parents[1]
 BASE={"target","ciphertext","cribs"}
 LINEAR_LIMITS={"max_key_slots","max_matrix_cells","max_operations"}
-SEARCH_LIMITS={"max_nodes","time_limit_seconds","max_frontier","max_cache_entries","local_exact_limit","ordering","resume_path","checkpoint_path"}
+SEARCH_LIMITS={"max_nodes","time_limit_seconds","max_frontier","max_cache_entries","local_exact_limit","ordering","resume_path","checkpoint_path","factor_group_size","group_exact_limit"}
 
 
 def _algebra_budget_result(error,request,stages,phase_provenance):
@@ -98,8 +99,12 @@ def _optimization_job(request,parse_target):
     from .scheduled_layers import solve_scheduled
     from .language import CharacterNgramModel
     from .search_runtime import lazy_ngram_problem
-    _check(request,BASE|LINEAR_LIMITS|SEARCH_LIMITS|{"stages","alphabet","cells","layer_model","model_path"})
+    _check(request,BASE|LINEAR_LIMITS|SEARCH_LIMITS|{"stages","alphabet","cells","layer_model","model_path","score_mask","seed_scan"})
     target,text,cribs,known=parse_target(request)
+    score_mask=request.get("score_mask",sorted(known))
+    if not isinstance(score_mask,list) or any(type(i) is not int or not 0<=i<len(text) for i in score_mask) or len(set(score_mask))!=len(score_mask) or not set(known)<=set(score_mask):
+        raise ValueError("score_mask must be distinct zero-based positions including every supplied crib position")
+    score_mask=sorted(score_mask)
     layer_model=request.get("layer_model","general")
     if layer_model not in ("general","scheduled"):
         raise ValueError("layer_model must be general or scheduled")
@@ -118,7 +123,7 @@ def _optimization_job(request,parse_target):
         raise ValueError("model exceeds32MiB")
     raw=path.read_bytes()
     model=CharacterNgramModel.from_json(raw.decode("utf-8-sig"))
-    job={"target":target,"text":text,"cribs":cribs,"known":known,"model":model,
+    job={"target":target,"text":text,"cribs":cribs,"known":known,"score_mask":score_mask,"model":model,
          "model_sha256":hashlib.sha256(raw).hexdigest(),"stages":stages,"phase_provenance":phase_provenance,
          "layer_model":layer_model,"solution":None,"problem":None,"algebra_budget":None}
     solver=solve_scheduled if layer_model=="scheduled" else solve_layers
@@ -128,7 +133,7 @@ def _optimization_job(request,parse_target):
         job["algebra_budget"]=_algebra_budget_result(exc,request,stages,phase_provenance)
     else:
         job["solution"]=solution
-        job["problem"]=lazy_ngram_problem(solution,model,known) if solution.feasible else None
+        job["problem"]=lazy_ngram_problem(solution,model,score_mask) if solution.feasible else None
     return job
 
 
@@ -140,10 +145,58 @@ def _optimization_result(job,search):
         candidate=_candidate(candidate,job["stages"],solution.alphabet,job["text"],job["known"])
     candidate=_verify(candidate,job["text"],job["known"])
     return {"search":search,"candidate":candidate,"scoring":job["problem"]["metadata"],
-            "model_file_sha256":job["model_sha256"],"display_model_score":job["model"].score(candidate["plaintext"],job["known"]).to_dict()}
+            "model_file_sha256":job["model_sha256"],"display_model_score":job["model"].score(candidate["plaintext"],job["score_mask"]).to_dict()}
+
+
+def _scan_seeds(request,job,started):
+    """One optional scanner page; verify its point and objective independently."""
+    from .search_runtime import score_assignment
+    setting=request.get("seed_scan")
+    if setting is None:
+        return [],None
+    _check(setting,{"backend","batch_size","offset","top"})
+    backend=setting.get("backend","cpu")
+    if backend not in ("cpu","cuda","auto"):
+        raise ValueError("seed_scan backend must be cpu, cuda or auto")
+    batch=_integer(setting.get("batch_size",256),"seed batch_size",1,8192)
+    offset=_integer(setting.get("offset",0),"seed offset",0,10**1000)
+    top=_integer(setting.get("top",1),"seed top",1,10)
+    seconds=request.get("time_limit_seconds",10)
+    if type(seconds) not in (int,float) or not math.isfinite(seconds) or not 0<seconds<=600:
+        raise ValueError("time limit must be in (0,600]")
+    if time.monotonic()-started>=seconds:
+        return [],{"status":"skipped_budget","pages":0,"elapsed_seconds":0.0}
+    from .accelerated import scan_batch
+    scan_request={k:v for k,v in request.items() if k!="seed_scan"}
+    seed_started=time.monotonic()
+    page=scan_batch(scan_request,backend=backend,offset=offset,batch_size=batch,top=top)
+    if page.get("model_file_sha256")!=job["model_sha256"]:
+        raise ValueError("seed scanner used a different frozen model")
+    points=[]
+    for candidate in page["candidates"]:
+        a,b=candidate.get("values_mod2"),candidate.get("values_mod13")
+        if not isinstance(a,list) or not isinstance(b,list):
+            raise ValueError("seed scanner candidate lacks field coordinates")
+        point=a+b
+        objective=score_assignment(job["problem"],point)
+        local=job["solution"].candidate(a,b)
+        if local["plaintext"]!=candidate.get("plaintext") or objective!=int(candidate["score_exact"],16):
+            raise ValueError("seed scanner point/plaintext/objective mismatch")
+        if job["layer_model"]=="general":
+            local=_candidate(local,job["stages"],job["solution"].alphabet,job["text"],job["known"])
+        _verify(local,job["text"],job["known"])
+        points.append(point)
+    return points,{"status":"verified","pages":1,"backend_requested":backend,"backend_used":page.get("backend_used"),
+        "evaluated":page["evaluated"],"offset":offset,"next_offset":page.get("next_offset"),
+        "verified_seeds":len(points),"ranking_exact_within_page":page.get("ranking_exact_within_page"),
+        "elapsed_seconds":time.monotonic()-seed_started,"model_file_sha256":job["model_sha256"],
+        "interpretation":"Feasible incumbent hints only; exact search validates every objective and retains its proof obligations."}
 
 
 def run_next(command,request,parse_target):
+    if command in ("validate-holdout","validate-controls"):
+        from .validation_protocols import run_validation
+        return run_validation(command,request)
     if command=="joint":
         from .joint_columnar import recover_joint_columnar
         fields={"period","order","cipher","alphabet","width","cells","column_direction","max_segmentations","max_states","max_candidates","time_limit_seconds"}
@@ -212,6 +265,7 @@ def run_next(command,request,parse_target):
         return _explain(command,request,{"target":target,**result},text,cribs)
     if command=="optimize-plus":
         from .search_runtime import optimize_lazy
+        started=time.monotonic()
         job=_optimization_job(request,parse_target)
         if job["algebra_budget"] is not None:
             result={"target":job["target"],**job["algebra_budget"],"model_file_sha256":job["model_sha256"],
@@ -219,7 +273,11 @@ def run_next(command,request,parse_target):
             return _explain(command,request,result,job["text"],job["cribs"])
         result={"target":job["target"],**job["solution"].summary(),"phase_provenance":job["phase_provenance"]}
         if job["solution"].feasible:
-            result["optimization"]=_optimization_result(job,optimize_lazy(job["problem"],**{k:request[k] for k in SEARCH_LIMITS if k in request}))
+            points,seed_report=_scan_seeds(request,job,started)
+            search=optimize_lazy(job["problem"],initial_assignments=points,elapsed_before_seconds=time.monotonic()-started,
+                                 **{k:request[k] for k in SEARCH_LIMITS if k in request})
+            search["seed_scan"]=seed_report
+            result["optimization"]=_optimization_result(job,search)
         return _explain(command,request,result,job["text"],job["cribs"])
     if command=="batch":
         from .parallel_search import optimize_batch
@@ -235,6 +293,8 @@ def run_next(command,request,parse_target):
             if not isinstance(name,str) or not 1<=len(name)<=128 or name in names:
                 raise ValueError("batch IDs must be unique nonempty strings up to128characters")
             names.add(name)
+            if isinstance(raw.get("request"),dict) and "seed_scan" in raw["request"]:
+                raise ValueError("seed_scan is currently supported by optimize-plus, not batch")
         pending=[]
         built={}
         records=[]

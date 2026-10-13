@@ -143,13 +143,41 @@ def lazy_ngram_problem(solution,model,excluded_positions=()):
     return problem
 
 
+def factor_partition(factors, group_size=0):
+    """Deterministic disjoint groups; every factor appears exactly once.
+
+    Greedily join overlapping scopes, with original factor index breaking ties.
+    Grouping is fixed before search and does not depend on incumbent scores.
+    """
+    _integer(group_size,"factor_group_size",0,8)
+    remaining=set(range(len(factors)))
+    groups=[]
+    while remaining:
+        first=min(remaining)
+        remaining.remove(first)
+        group=[first]
+        scope=set(factors[first]["scope"])
+        while remaining and len(group)<max(1,group_size):
+            chosen=min(remaining,key=lambda i:(-len(scope.intersection(factors[i]["scope"])),i))
+            if not scope.intersection(factors[chosen]["scope"]):
+                break
+            group.append(chosen)
+            remaining.remove(chosen)
+            scope.update(factors[chosen]["scope"])
+        groups.append(tuple(group))
+    return tuple(groups)
+
+
 class _Evaluator:
-    def __init__(self,problem,cache_limit,local_limit):
+    def __init__(self,problem,cache_limit,local_limit,factor_group_size=0,group_exact_limit=4096):
         self.domains,self.factors = _validate(problem)
         self.model = problem.get("model")
         self.cache_limit,self.local_limit = cache_limit,local_limit
         self.cache = {}
-        self.stats = {"cache_hits":0,"bound_evaluations":0,"exact_local_completions":0,"relaxed_bounds":0,"correlated_bounds":0,"observed_grams_checked":0}
+        self.groups=factor_partition(self.factors,factor_group_size)
+        self.group_exact_limit=_integer(group_exact_limit,"group_exact_limit",1,100000)
+        self.stats = {"cache_hits":0,"bound_evaluations":0,"exact_local_completions":0,"relaxed_bounds":0,"correlated_bounds":0,"observed_grams_checked":0,
+                      "group_bounds":0,"group_exact_completions":0,"group_fallbacks":0}
         self.grams = [] if self.model is None else sorted(self.model["counts"].items(),key=lambda kv:(-kv[1],kv[0]))
         self.correlated = None if self.model is None else CorrelatedNgramBound(self.model["alphabet"],self.model["counts"],self.model["p"],self.model["q"])
 
@@ -214,7 +242,37 @@ class _Evaluator:
         return upper
 
     def upper(self,assignment):
-        return math.prod(self.local_upper(i,assignment)**f.get("power",1) for i,f in enumerate(self.factors))
+        bounds=[]
+        for group in self.groups:
+            if len(group)==1:
+                i=group[0]
+                bounds.append(self.local_upper(i,assignment)**self.factors[i].get("power",1))
+                continue
+            scope=tuple(sorted({v for i in group for v in self.factors[i]["scope"]}))
+            key=("group",group,tuple(assignment[v] for v in scope))
+            if key in self.cache:
+                self.stats["cache_hits"]+=1
+                bounds.append(self.cache[key])
+                continue
+            unresolved=tuple(v for v in scope if assignment[v]<0)
+            size=math.prod(self.domains[v] for v in unresolved)
+            if size>self.group_exact_limit:
+                self.stats["group_fallbacks"]+=1
+                upper=math.prod(self.local_upper(i,assignment)**self.factors[i].get("power",1) for i in group)
+            else:
+                self.stats["group_bounds"]+=1
+                upper=0
+                point=list(assignment)
+                for values in product(*(range(self.domains[v]) for v in unresolved)):
+                    for v,value in zip(unresolved,values):
+                        point[v]=value
+                    value=math.prod(self._value(self.factors[i],tuple(point[v] for v in self.factors[i]["scope"]))**self.factors[i].get("power",1) for i in group)
+                    upper=max(upper,value)
+                    self.stats["group_exact_completions"]+=1
+            if len(self.cache)<self.cache_limit:
+                self.cache[key]=upper
+            bounds.append(upper)
+        return math.prod(bounds)
 
 
 def score_assignment(problem,assignment):
@@ -224,16 +282,18 @@ def score_assignment(problem,assignment):
     return evaluator.upper(assignment)
 
 
-def _identity(problem,ordering,local_limit):
+def _identity(problem,ordering,local_limit,groups=(),group_exact_limit=4096):
     root = Path(__file__).resolve().parent
     return {"problem_sha256":_digest(problem),"ordering":ordering,"local_exact_limit":local_limit,
+            "factor_groups":[list(g) for g in groups],"group_exact_limit":group_exact_limit,
             "sources":{name:hashlib.sha256((root/name).read_bytes()).hexdigest() for name in ("search_runtime.py","language.py","correlated_bound.py")},
-            "version":"adaptive-search-v2; exact subgroup window bounds; lexicographically smallest original assignment"}
+            "version":"adaptive-search-v3; disjoint group bounds; verified assignment seeds; lexicographically smallest original assignment"}
 
 
 def optimize_lazy(problem,*,max_nodes=10000,time_limit_seconds=10,max_frontier=10000,
                   max_cache_entries=100000,local_exact_limit=64,ordering="impact",
-                  resume_path=None,checkpoint_path=None):
+                  resume_path=None,checkpoint_path=None,factor_group_size=0,group_exact_limit=4096,
+                  initial_assignments=(),elapsed_before_seconds=0):
     """Return exact incumbent/bound, optionally preserving the live frontier.
 
     Caps are cooperative (checked between node expansions). Changing a cap on
@@ -244,16 +304,26 @@ def optimize_lazy(problem,*,max_nodes=10000,time_limit_seconds=10,max_frontier=1
     _integer(max_frontier,"max_frontier",1,100000)
     _integer(max_cache_entries,"max_cache_entries",0,1000000)
     _integer(local_exact_limit,"local_exact_limit",1,100000)
+    _integer(factor_group_size,"factor_group_size",0,8)
+    _integer(group_exact_limit,"group_exact_limit",1,100000)
+    if isinstance(elapsed_before_seconds,bool) or not isinstance(elapsed_before_seconds,(int,float)) or not math.isfinite(elapsed_before_seconds) or elapsed_before_seconds<0:
+        raise ValueError("elapsed_before_seconds must be finite and nonnegative")
+    if not isinstance(initial_assignments,(list,tuple)) or len(initial_assignments)>100:
+        raise ValueError("at most100 complete assignment seeds are allowed")
     if isinstance(time_limit_seconds,bool) or not isinstance(time_limit_seconds,(int,float)) or not math.isfinite(time_limit_seconds) or not 0<time_limit_seconds<=600:
         raise ValueError("time limit must be in (0,600]")
     if ordering not in ("impact","natural"):
         raise ValueError("ordering must be impact or natural")
     if checkpoint_path is not None and Path(checkpoint_path).exists():
         raise ValueError("checkpoint output exists; choose a fresh path")
-    started = time.monotonic()
-    evaluator = _Evaluator(problem,max_cache_entries,local_exact_limit)
+    actual_started = time.monotonic()
+    def elapsed():
+        # Keep earlier work separate: backdating a large clock value can round
+        # away a small prior duration and silently restore spent budget.
+        return elapsed_before_seconds + (time.monotonic() - actual_started)
+    evaluator = _Evaluator(problem,max_cache_entries,local_exact_limit,factor_group_size,group_exact_limit)
     domains = evaluator.domains
-    identity = _identity(problem,ordering,local_exact_limit)
+    identity = _identity(problem,ordering,local_exact_limit,evaluator.groups,group_exact_limit)
     best = tuple(0 for _ in domains)
     best_score = evaluator.upper(best)
     root = tuple(-1 for _ in domains)
@@ -286,6 +356,13 @@ def optimize_lazy(problem,*,max_nodes=10000,time_limit_seconds=10,max_frontier=1
                 raise ValueError("saved bound does not match recomputation")
             frontier.append((-bound,point))
         heapq.heapify(frontier)
+    seed_scores=[]
+    for seed in initial_assignments:
+        point=tuple(seed) if isinstance(seed,(list,tuple)) else seed
+        value=score_assignment(problem,point)  # validates the domain, never trusts a supplied score
+        seed_scores.append({"assignment":list(point),"score_hex":hex(value)})
+        if value>best_score or (value==best_score and point<best):
+            best,best_score=point,value
     if len(frontier)>max_frontier:
         raise ValueError("saved frontier exceeds the requested memory cap")
     def lex_min(point):
@@ -305,7 +382,7 @@ def optimize_lazy(problem,*,max_nodes=10000,time_limit_seconds=10,max_frontier=1
         if nodes>=max_nodes:
             stop="node_limit"
             break
-        if time.monotonic()-started>=time_limit_seconds:
+        if elapsed()>=time_limit_seconds:
             stop="time_limit"
             break
         neg,point = heapq.heappop(frontier)
@@ -350,8 +427,10 @@ def optimize_lazy(problem,*,max_nodes=10000,time_limit_seconds=10,max_frontier=1
             "stop_reason":stop,"nodes":nodes,"nodes_total":previous_nodes+nodes,"leaf_nodes":leaves,"pruned_nodes":pruned,
             "frontier_nodes":len(frontier),"cache_entries":len(evaluator.cache),"work":evaluator.stats,
             "assignment_space_size":math.prod(domains),"identity":identity,"resumed":resume_path is not None,
+            "verified_seeds":seed_scores,"elapsed_before_seconds":elapsed_before_seconds,
             "checkpoint_written":str(checkpoint_path) if checkpoint_path is not None else None,
             "bounds":{"max_nodes":max_nodes,"max_frontier":max_frontier,"max_cache_entries":max_cache_entries,
-                      "local_exact_limit":local_exact_limit,"time_limit_seconds":time_limit_seconds},
-            "ordering":ordering,"runtime_seconds":time.monotonic()-started,
+                      "local_exact_limit":local_exact_limit,"time_limit_seconds":time_limit_seconds,
+                      "factor_group_size":factor_group_size,"group_exact_limit":group_exact_limit},
+            "ordering":ordering,"runtime_seconds":elapsed(),
             "interpretation":"Exact bounds for this product objective only. Lazy letter-domain bounds may ignore correlations; pruning remains admissible. No authentication."}

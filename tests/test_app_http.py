@@ -20,6 +20,7 @@ class HttpTests(unittest.TestCase):
         self.client=urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
     def tearDown(self):
+        self.server.campaigns.close()
         self.server.manager.close()
         self.server.shutdown()
         self.server.server_close()
@@ -77,6 +78,45 @@ class HttpTests(unittest.TestCase):
         self.assertEqual(exported[1]["id"],key)
         self.assertIn("attachment",exported[2]["Content-Disposition"])
         self.assertTrue(exported[1]["candidates"][0]["evidence"]["literal_reencryption_matches"])
+
+    def test_import_independent_replay_and_no_job_execution(self):
+        from tests.test_import_inspector import artifact
+        info=self.call("/api/info")[1]
+        auth={"Content-Type":"application/json","X-Kryptos-Token":info["control_token"]}
+        good=artifact()
+        status,value,_=self.call("/api/import",json.dumps({"artifact":good}).encode(),auth)
+        self.assertEqual(status,200,value)
+        self.assertTrue(value["inspection"]["valid"])
+        good["candidate"]["plaintext"]="ABCDEX"
+        status,value,_=self.call("/api/import",json.dumps({"artifact":good}).encode(),auth)
+        self.assertEqual(status,200,value)
+        self.assertFalse(value["inspection"]["valid"])
+        self.assertEqual(self.call("/api/import",b'{"artifact":{},"candidate_index":true}',auth)[0],400)
+        self.assertIsNone(self.call("/api/status")[1]["run"])
+
+    def test_campaign_endpoints_and_single_run_ownership(self):
+        from unittest.mock import patch
+        info=self.call("/api/info")[1]
+        self.assertEqual(len(info["validation_presets"]),2)
+        auth={"Content-Type":"application/json","X-Kryptos-Token":info["control_token"]}
+        base={k:v for k,v in next(p for p in info["presets"] if p["id"]=="demo-scan").items() if k in {"kind","command","request"}}
+        plan={"base":base,"axes":[{"path":"request.stages.0.period","values":[1,2,3]}]}
+        status,value,_=self.call("/api/campaigns/preview",json.dumps(plan).encode(),auth)
+        self.assertEqual(status,200,value)
+        self.assertEqual(value["preview"]["job_count"],3)
+        self.assertEqual(self.call("/api/campaigns")[1],{"campaigns":[]})
+        with patch.object(self.server.campaigns,"_begin"):
+            status,value,_=self.call("/api/campaigns/start",json.dumps(plan).encode(),auth)
+        self.assertEqual(status,200,value)
+        key=value["campaign"]["id"]
+        self.assertEqual(self.call("/api/campaigns/"+key)[1]["campaign"]["id"],key)
+        self.assertEqual(self.call("/api/status")[1]["campaign"]["id"],key)
+        with patch.object(self.server.campaigns,"is_active",return_value=True):
+            self.assertEqual(self.call("/api/start",json.dumps(base).encode(),auth)[0],400)
+            self.assertEqual(self.call("/api/pause",json.dumps({"run_id":"0"*32}).encode(),auth)[0],400)
+        self.assertEqual(self.call("/api/resources",b'{"run_id":"missing","workers":2}',auth)[0],404)
+        self.assertEqual(self.call("/api/campaigns/pause",b'{}',auth)[0],400)
+        self.assertIsNone(self.call("/api/status")[1]["run"])
 
 
 if __name__=="__main__":

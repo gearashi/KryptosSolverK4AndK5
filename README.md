@@ -30,9 +30,13 @@ See [the local application guide](docs/LOCAL_APP.md) for interpreter selection, 
 
 ## Controls and interpretation
 
-- CPU scans use exact integer scoring. CUDA computes an approximate floating-point shortlist, then rescoring and full encryption replay occur on CPU. A shortlist is only exhaustive when every candidate in its page was exactly rescored.
+- CPU scans use exact integer scoring. CUDA defaults to certified ranking: rigorous score intervals retain every possible top candidate for exact CPU comparison and encryption replay. A separate approximate mode is explicitly labeled.
+- Persistent workers reuse prepared families and GPU buffers across pages. The exact optimizer can accept independently verified CPU/GPU scan seeds and jointly bound overlapping scoring factors.
+- **Campaigns** expand a recipe matrix into durable jobs. Completed jobs survive restart. Proved equal plaintext families with identical scoring reuse completed exact rankings, while each recipe gets its own reconstructed keys and replay.
+- **Validation** reruns selection with withheld clue values removed, or compares the declared model bank on newly authored positive messages and paired shuffled controls. These are bounded diagnostic experiments, not solution probabilities.
+- **Inspect & trace** independently replays imported JSON and follows individual letters through substitutions, gathers, and coordinate shifts. Imported verification claims and file paths are treated as data.
 - **Pause** completes and commits the current scan wave. **Stop** discards its in-flight work and preserves earlier committed results. Resume uses the saved position and checks source/model identity.
-- The run time budget is checked between waves; every worker has a separate 60-second outer deadline. CPU family scans support up to four workers; CUDA uses one worker/context.
+- The run time budget is checked between waves; every worker has a separate 60-second outer deadline. CPU family scans support up to four workers; CUDA uses one worker/context. Worker count, idle intervals and adaptive page duration can change at committed boundaries, with a saved event history.
 - Known clue letters and every n-gram touching them are masked from ordinary language scoring. A reporting-only sensitivity diagnostic can also mask letters fixed indirectly by the model.
 - Re-encryption, crib consistency and a high language score do not authenticate a solution. Results describe their assumptions and actual bounded coverage. Nothing is submitted to an external service.
 
@@ -51,6 +55,8 @@ python -m kryptos scheduled --request examples/scheduled-shared.json
 python -m kryptos mixed --request examples/mixed-shared.json
 python -m kryptos optimize-plus --request examples/optimize-lazy.json
 python -m kryptos batch --request examples/batch-lazy.json
+python -m kryptos validate-holdout --request examples/validate-holdout.json
+python -m kryptos validate-controls --request examples/validate-controls.json
 ```
 
 See [checkpoint K commands](docs/CLI_CHECKPOINT_K.md), [earlier command examples](docs/CLI_EXAMPLES.md), [bounded results and limits](research/IMPROVEMENTS_K.md), and [the research history](research/STATUS.md). These document joint column/key recovery, shared keys and offsets, multiple known alphabets, coordinate-driven schedules, fractionation, arbitrary substitution feasibility, semantic hypotheses and exact constraint witnesses. The normalized sculpture dataset represents ordinal textual coordinates, not measured three-dimensional geometry.
@@ -59,7 +65,7 @@ Historical controls include independently published PK fixtures and 175,760 crib
 
 ## Validation and packaged data
 
-The curated publication checkout ran **256 tests: 255 passed and one optional raw-source audit skipped** because the original third-party pages are not distributed. Actual NVIDIA GPU tests passed. Browser checks exercised CPU workers, pause/resume/stop, history, export, candidate explanations and an actual CUDA page at desktop and mobile sizes. Small reproducible CPU/GPU and pruning audits are retained in `research/runs/release-L-002/`; their manifests also validate against the packaged checkout. See [release validation](research/release-validation.json) and [the research history](research/STATUS.md) for scope and limitations.
+The curated publication checkout ran **310 tests: 309 passed and one optional raw-source audit skipped** because the original third-party pages are not distributed. Actual NVIDIA GPU tests passed. **42 browser checks** exercised campaigns, resource changes, certified CUDA ranking, seeded optimization, validation, import, export and letter tracing at desktop and mobile sizes. Final reproducible audits are retained in `research/runs/release-M-002/`; the persistent-worker audit compares 20 pages per mode/backend, and the search-quality audit checks seeds, joint bounds and competing controls. See [all nine improvements](research/IMPROVEMENTS_M.md) and [release validation](research/release-validation.json) for measurements, source hashes and limitations.
 
 Run the CPU suite with:
 

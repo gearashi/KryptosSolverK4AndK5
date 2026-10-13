@@ -21,6 +21,7 @@ cupy_cache/
 !/research/source_snapshots/checkpoint-K-original/
 !/research/source_snapshots/helpers-initial/
 !/research/source_snapshots/accelerated-initial/
+!/research/source_snapshots/release-M-*/
 !/research/source_snapshots/sculpture-J/
 /research/source_snapshots/sculpture-J/*
 !/research/source_snapshots/sculpture-J/pk2_fixture.json
@@ -32,6 +33,8 @@ cupy_cache/
 /research/tmp-*/
 /research/.app-test-*/
 /research/.http-test-*/
+/research/.campaign-test-*/
+/research/.resource-test-*/
 /research/.batch-*/
 /research/.paths-*/
 /research/.test-*/
@@ -39,6 +42,7 @@ cupy_cache/
 # Bulky historical output is local. Explicitly retain the five frozen app models.
 /research/runs/*
 !/research/runs/release-L-*/
+!/research/runs/release-M-*/
 !/research/runs/evaluation-J-001/
 /research/runs/evaluation-J-001/*
 !/research/runs/evaluation-J-001/artifacts/

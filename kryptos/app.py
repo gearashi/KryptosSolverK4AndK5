@@ -16,8 +16,18 @@ import webbrowser
 from .advanced_cli import json_safe_integers
 from .app_jobs import RunManager,ROOT,MODELS
 from .data import K4_CIPHERTEXT,K4_CRIBS
+from .campaigns import CampaignManager,preview_campaign
+from .import_inspector import inspect_import
 
-VERSION="0.1.0"
+VERSION="0.2.0"
+
+
+def validation_presets():
+    return [{"id":command,"label":label,"kind":"exact","command":command,
+             "description":description,"request":json.loads((ROOT/"examples"/(command+".json")).read_text())}
+            for command,label,description in (
+                ("validate-holdout","Reduced-clue recovery", "Rerun model selection with withheld clue values removed, then assess recovery. All supplied clue positions are excluded from language scoring; public K4 clues remain retrospective evidence."),
+                ("validate-controls","Competing models · positive/null controls", "Two newly authored messages and paired shuffled controls run through the complete declared model bank. This fast fixture uses an artificial contiguous clue mask, not the K4 clue geometry."))]
 
 
 def presets():
@@ -27,7 +37,9 @@ def presets():
         {"id":"k4-scan","label":"K4 · period-27 family scan","description":"Enumerate distinct crib-compatible repeating-key plaintexts in bounded pages. Language scores are hypotheses, not authenticated answers.",
          "kind":"accelerated","command":"optimize-plus","request":{"target":"k4","alphabet":"kryptos","stages":[{"operation":"substitution","period":27}],"model_path":model}},
         {"id":"demo-scan","label":"Control · recover a known message","description":"A small synthetic family for checking CPU/GPU execution and candidate explanations. This is not K4.",
-         "kind":"accelerated","command":"optimize-plus","request":json.loads((ROOT/"examples/optimize-lazy.json").read_text())}]
+         "kind":"accelerated","command":"optimize-plus","request":json.loads((ROOT/"examples/optimize-lazy.json").read_text())},
+        {"id":"demo-optimize","label":"Control · exact optimization with optional scan seed","description":"Check exact pruning and verified CPU/GPU incumbent seeds on a small synthetic family.",
+         "kind":"exact","command":"optimize-plus","request":json.loads((ROOT/"examples/optimize-lazy.json").read_text())}]
     for name,command,label in (("joint-ragged","joint","Control · joint column/key recovery"),
                                 ("scheduled-shared","scheduled","Control · shared key and sculpture schedule"),
                                 ("mixed-shared","mixed","Control · different alphabets")):
@@ -67,6 +79,11 @@ def browser_safe_integers(value):
 
 def make_server(state_dir,port=8767,*,probe=True):
     manager=RunManager(Path(state_dir)/"runs")
+    try:
+        campaigns=CampaignManager(manager)
+    except BaseException:
+        manager.close()
+        raise
     token=secrets.token_urlsafe(32)
     capabilities={"cpu":True,"workers_max":4,"cuda":{"ready":False,"available":False,"error":"GPU probe has not run"}}
     if probe:
@@ -120,11 +137,15 @@ def make_server(state_dir,port=8767,*,probe=True):
                 if parsed.path=="/api/info":
                     goal_path=ROOT/"research/improvement-state.json"
                     self._send(200,{"version":VERSION,"k4":{"ciphertext":K4_CIPHERTEXT,"cribs":list(K4_CRIBS)},
-                        "presets":presets(),"models":MODELS,"capabilities":capabilities,"control_token":token,
+                        "presets":presets(),"validation_presets":validation_presets(),"models":MODELS,"capabilities":capabilities,"control_token":token,
                         "goal":json.loads(goal_path.read_text()) if goal_path.exists() else None,
                         "knowledge":{"k4":"No authenticated solution from this project","k5":"No authenticated public input bundled; supply explicit ciphertext and assumptions"}})
                 elif parsed.path=="/api/status":
-                    self._send(200,{"run":manager.view()})
+                    self._send(200,{"run":manager.view(),"campaign":campaigns.view()})
+                elif parsed.path=="/api/campaigns":
+                    self._send(200,{"campaigns":campaigns.list_campaigns()})
+                elif re.fullmatch(r"/api/campaigns/[a-f0-9]{32}",parsed.path):
+                    self._send(200,{"campaign":campaigns.view(parsed.path.rsplit("/",1)[1])})
                 elif parsed.path=="/api/runs":
                     self._send(200,{"runs":manager.list_runs()})
                 elif re.fullmatch(r"/api/runs/[a-f0-9]{32}",parsed.path):
@@ -159,30 +180,53 @@ def make_server(state_dir,port=8767,*,probe=True):
                 if self.headers.get("Content-Type","").split(";",1)[0]!="application/json":
                     raise ValueError("Send application/json")
                 length=int(self.headers.get("Content-Length","0"))
-                if not 0<length<=1024*1024:
-                    raise ValueError("Request body must be 1 byte through 1 MiB")
+                limit=2*1024*1024 if self.path=="/api/import" else 1024*1024
+                if not 0<length<=limit:
+                    raise ValueError(f"Request body must be 1 byte through {limit//1024} KiB")
                 body=strict_json(self.rfile.read(length).decode("utf-8"))
                 if self.path=="/api/start":
-                    result=manager.start(body)
+                    with campaigns.lock:
+                        if campaigns.is_active():
+                            raise ValueError("Use campaign controls while a campaign is active")
+                        response={"run":manager.start(body)}
                 elif self.path in {"/api/pause","/api/stop","/api/resume"}:
                     if not isinstance(body,dict) or set(body)!={"run_id"}:
                         raise ValueError("Control requests require run_id only")
-                    result=manager.control(self.path.rsplit("/",1)[1],body["run_id"])
+                    with campaigns.lock:
+                        if campaigns.is_active():
+                            raise ValueError("Use campaign controls while a campaign is active")
+                        response={"run":manager.control(self.path.rsplit("/",1)[1],body["run_id"])}
+                elif self.path=="/api/resources":
+                    if not isinstance(body,dict) or "run_id" not in body:
+                        raise ValueError("Resource updates require run_id and settings")
+                    response={"run":manager.update_resources(body["run_id"],{k:v for k,v in body.items() if k!="run_id"})}
+                elif self.path=="/api/import":
+                    response={"inspection":inspect_import(body)}
+                elif self.path=="/api/campaigns/preview":
+                    response={"preview":preview_campaign(body)}
+                elif self.path=="/api/campaigns/start":
+                    response={"campaign":campaigns.start(body)}
+                elif self.path in {"/api/campaigns/pause","/api/campaigns/stop","/api/campaigns/resume"}:
+                    if not isinstance(body,dict) or set(body)!={"campaign_id"}:
+                        raise ValueError("Campaign controls require campaign_id only")
+                    response={"campaign":campaigns.control(self.path.rsplit("/",1)[1],body["campaign_id"])}
                 else:
                     self._send(404,{"error":"Unknown operation"})
                     return
-                self._send(200,{"run":result})
+                self._send(200,response)
             except KeyError as error:
                 self._send(404,{"error":str(error)})
-            except (ValueError,TypeError,UnicodeError,OSError) as error:
+            except (ValueError,TypeError,UnicodeError,OSError,RecursionError) as error:
                 self._send(400,{"error":str(error)})
 
     try:
         server=ThreadingHTTPServer(("127.0.0.1",port),Handler)
     except OSError:
+        campaigns.close()
         manager.close()
         raise
     server.manager=manager
+    server.campaigns=campaigns
     return server
 
 
@@ -208,6 +252,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        server.campaigns.close()
         server.manager.close()
         server.server_close()
 

@@ -8,6 +8,31 @@ from unittest.mock import patch
 from kryptos.accelerated import _digits, probe_backend, scan_batch
 from kryptos.general_layers import solve_layers
 from kryptos.language import CorpusDocument, train_ngram_model
+from kryptos.certified_scores import log2_interval, overlapping_indices
+
+
+class CertifiedScoreTests(unittest.TestCase):
+    def test_integer_power_oracle_including_coarse_intervals(self):
+        wide = 0
+        for bits in (0,1,4,8):
+            for precision in (8,96):
+                for value in range(1,201):
+                    low, high = log2_interval(value,bits,precision)
+                    floor = (value**(1<<bits)).bit_length()-1
+                    self.assertLessEqual(low,floor)
+                    self.assertGreaterEqual(high,floor+(value & (value-1) != 0))
+                    wide += high-low > 1
+        self.assertGreater(wide,0)  # Ambiguous digits widen, not guess.
+        self.assertEqual(log2_interval(1<<19999),(19999<<32,19999<<32))
+
+    def test_interval_cutoff_retains_every_tie_and_true_top(self):
+        products = [3*7,7*3,5*4,2*11,17,23,23,2*2*2*2]
+        intervals = [log2_interval(n,4,8) for n in products]
+        selected, cutoff = overlapping_indices([a for a,b in intervals],[b for a,b in intervals],3)
+        true_cutoff = sorted(products,reverse=True)[2]
+        self.assertTrue(all(i in selected for i,p in enumerate(products) if p>=true_cutoff))
+        self.assertTrue(all(intervals[i][1]<cutoff for i in range(len(products)) if i not in selected))
+        self.assertEqual(overlapping_indices([7]*20,[7]*20,2)[0],list(range(20)))
 
 
 class AcceleratedTests(unittest.TestCase):
@@ -116,7 +141,7 @@ class AcceleratedTests(unittest.TestCase):
 
     def test_argument_caps_and_explicit_cuda_failure(self):
         for kwargs in ({"backend": "gpu"}, {"offset": True}, {"offset": -1}, {"offset": 27},
-                       {"batch_size": 0}, {"batch_size": 65537}, {"top": 101}):
+                       {"batch_size": 0}, {"batch_size": 65537}, {"top": 101},{"ranking_mode":"float"}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
                 scan_batch(self.request(), **kwargs)
         with patch("kryptos.accelerated._cuda_rank", side_effect=RuntimeError("deliberate unavailable")):
@@ -131,6 +156,12 @@ class AcceleratedTests(unittest.TestCase):
         request = self.request(ciphertext="A"*100, stages=[{"operation": "substitution", "period": 30}])
         with self.assertRaisesRegex(ValueError, "work cap"):
             scan_batch(request, batch_size=65536)
+
+    def test_explicit_score_mask(self):
+        result=scan_batch(self.request(score_mask=[0,2,4]),top=26)
+        self.assertEqual(result["scoring"]["windows"],0)
+        self.assertEqual(result["scoring"]["excluded_positions"],[0,2,4])
+        self.assertTrue(all(c["score"] is None for c in result["candidates"]))
 
     @unittest.skipUnless(__import__("os").environ.get("KRYPTOS_TEST_CUDA") == "1", "explicit CUDA test opt-in")
     def test_real_cuda_matches_cpu_and_cpu_replays(self):
@@ -155,10 +186,21 @@ class AcceleratedTests(unittest.TestCase):
         cpu = scan_batch(large, offset=2**54+19, batch_size=2)
         cuda = scan_batch(large, backend="cuda", offset=2**54+19, batch_size=2)
         self.assertEqual([c["plaintext"] for c in cpu["candidates"]], [c["plaintext"] for c in cuda["candidates"]])
-        larger = scan_batch(self.request(stages=[{"operation": "substitution", "period": 2}]), backend="cuda", batch_size=512)
+        larger = scan_batch(self.request(stages=[{"operation": "substitution", "period": 2}]), backend="cuda", batch_size=512,ranking_mode="approximate")
         self.assertFalse(larger["ranking_exact_within_page"])
         self.assertEqual(larger["cpu_exact_scored"], 64)
         self.assertTrue(all(c["evidence"]["literal_reencryption_matches"] for c in larger["candidates"]))
+        for mask in ([],[0,2,4]):
+            request=self.request(stages=[{"operation":"substitution","period":2}],score_mask=mask)
+            expected=scan_batch(request,batch_size=512)
+            certified=scan_batch(request,backend="cuda",batch_size=512)
+            self.assertEqual([(c["score_exact"],c["plaintext"],c["index"]) for c in expected["candidates"]],
+                             [(c["score_exact"],c["plaintext"],c["index"]) for c in certified["candidates"]])
+            self.assertTrue(certified["ranking_exact_within_page"])
+            cached=scan_batch(request,backend="cuda",offset=512,batch_size=32)
+            self.assertTrue(cached["certification"]["immutable_device_cache_hit"])
+            if mask:
+                self.assertEqual(certified["cpu_exact_scored"],512)
 
 
 if __name__ == "__main__":

@@ -23,8 +23,8 @@ def body(**changes):
     return value
 
 
-def wait(manager):
-    manager.thread.join(timeout=10)
+def wait(manager,timeout=10):
+    manager.thread.join(timeout=timeout)
     if manager.thread.is_alive():
         raise AssertionError("bounded test job did not finish")
     return manager.view()
@@ -291,12 +291,14 @@ os._exit(0)
         request={"kind":"exact","command":"joint","request":{"target":"custom","ciphertext":"DKBIJHIFGN",
             "cribs":[{"start":1,"text":"ABCDEFGHIJ"}],"period":2,"width":4,"order":"TS","alphabet":"standard"}}
         self.manager.start(request)
-        result=wait(self.manager)
+        result=wait(self.manager,timeout=30)
         self.assertEqual(result["state"],"completed",result["error"])
         self.assertTrue(result["candidates"][0]["evidence"]["literal_reencryption_matches"])
-        request=body(max_batches=2,batch_size=13)
+        # Two cold interpreter starts in a newly exported Windows checkout can
+        # exceed10s. This checks26 exact candidates, not startup performance.
+        request=body(max_batches=2,batch_size=13,time_limit_seconds=30)
         self.manager.start(request)
-        result=wait(self.manager)
+        result=wait(self.manager,timeout=30)
         self.assertEqual(result["state"],"completed",result["error"])
         self.assertEqual(result["progress"]["completed"],26)
         self.assertTrue(all(c["evidence"]["literal_reencryption_matches"] for c in result["candidates"]))

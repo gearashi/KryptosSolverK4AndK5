@@ -183,8 +183,9 @@ def doctor():
                    "returncode": query.returncode}
         except (OSError, subprocess.TimeoutExpired) as exc:
             gpu = {"status": type(exc).__name__}
+    gpu["interpretation"] = "nvidia-smi reports device visibility, not compiled CUDA readiness; the local app performs the actual backend probe."
     return {"python": sys.version, "platform": platform.platform(), "logical_cpus": os.cpu_count(),
-            "gpu": gpu, "execution": "Current exact solvers use one CPU process; no GPU backend is claimed."}
+            "gpu": gpu, "execution": "Exact constraints run on CPU; family scans support 1..4 CPU workers or an optional compiled CUDA backend. GPU readiness is checked separately by the local app."}
 
 
 def run_grid(request):
@@ -217,7 +218,7 @@ def run_residues(request):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("recover", "layers", "grid", "residues", "columns", "general", "optimize", "alphabet", "layout", "joint", "scheduled", "mixed", "alphabet-plus", "optimize-plus", "batch", "doctor"))
+    parser.add_argument("command", choices=("recover", "layers", "grid", "residues", "columns", "general", "optimize", "alphabet", "layout", "joint", "scheduled", "mixed", "alphabet-plus", "optimize-plus", "batch", "validate-holdout", "validate-controls", "doctor"))
     parser.add_argument("--request", type=Path, help="JSON request; omitted uses canonical K4 defaults")
     parser.add_argument("--output", type=Path, help="new JSON output file; otherwise standard output")
     args = parser.parse_args()
@@ -230,7 +231,7 @@ def main():
         original = {"recover": run_recovery, "layers": run_layers, "grid": run_grid, "residues": run_residues}
         result = (doctor() if args.command == "doctor" else original[args.command](request)
                   if args.command in original else run_next(args.command, request, _target)
-                  if args.command in ("joint", "scheduled", "mixed", "alphabet-plus", "optimize-plus", "batch")
+                  if args.command in ("joint", "scheduled", "mixed", "alphabet-plus", "optimize-plus", "batch", "validate-holdout", "validate-controls")
                   else run_advanced(args.command, request, _target))
         encoded = json.dumps(json_safe_integers(result), indent=2, allow_nan=False) + "\n"
         if args.output:

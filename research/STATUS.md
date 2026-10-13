@@ -1,6 +1,14 @@
 # K4/K5 investigation
 
-## Current application checkpoint L — 2026-10-13
+## Current application checkpoint M — 2026-10-13
+
+All nine improvements explicitly requested after checkpoint L are implemented: persistent CPU/CUDA workers, verified optimizer seeds, joint factor bounds, certified GPU ranking, durable recipe campaigns with exact family reuse, reduced-clue recovery, competing-model controls, adaptive resource controls, and safe import with letter tracing. The app is version 0.2.0. [Checkpoint M](IMPROVEMENTS_M.md) maps each improvement to implementation and acceptance evidence.
+
+Recursive integration review also fixed result-commit failure handling, campaign dispatch recovery, resource-event accounting, alias diagnostics, Windows worker-descendant ownership, idempotent cleanup, elapsed-time precision and mobile table overflow. The clean publication copy ran 310 tests: 309 passed and one optional raw-source audit skipped. Actual CUDA tests and 42 browser assertions passed. The final persistent audit evaluated 20 pages of 256 candidates in each of four CPU/CUDA and one-shot/persistent modes, with identical rankings and 240 independent retained score/replay checks. The separate final search-quality audit covers CUDA seeding, all 81 partial joint-bound assignments and the declared holdout/positive/null controls. Evidence, source hashes and delivery status are in [release validation](release-validation.json).
+
+This completes the explicitly requested implementation backlog after the recorded review; it is not a claim that no future improvement exists. K4/K5 decipherment remains unresolved. Exact rankings and exclusions apply only to the declared models, masks and evaluated coverage. No authenticated public K5 ciphertext is bundled. The old decision to defer exact-family deduplication is superseded by the implemented campaign workflow and its verified reuse case.
+
+## Historical application checkpoint L — 2026-10-13
 
 The user's active delivery goal is now a local CPU/GPU browser application and GitHub publication, with an evidence-driven improvement loop. The earlier choice to stop dashboard development is superseded. The cryptanalytic goal remains unresolved: this project has no authenticated K4 or K5 decipherment and bundles no authenticated public K5 ciphertext.
 
