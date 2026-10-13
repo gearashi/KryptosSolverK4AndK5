@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#111714">
+  <title>Kryptos · Research workbench</title>
+  <link rel="icon" href="/static/mark.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to workbench</a>
+<div class="app-shell">
+  <aside class="sidebar" aria-label="Workspace navigation">
+    <a class="brand" href="/" aria-label="Kryptos home"><span class="brand-mark" aria-hidden="true">K<span>₄</span></span><span>KRYPTOS<small>RESEARCH WORKBENCH</small></span></a>
+    <p class="nav-heading">WORKSPACE</p>
+    <nav class="navigation" aria-label="Sections">
+      <button class="nav-link active" data-view="workbench" aria-current="page"><span aria-hidden="true">⌘</span> Workbench <small>01</small></button>
+      <button class="nav-link" data-view="history"><span aria-hidden="true">◷</span> Saved runs <small id="history-count">02</small></button>
+      <button class="nav-link" data-view="guide"><span aria-hidden="true">◇</span> Research guide <small>03</small></button>
+    </nav>
+    <div class="passage-map"><p class="nav-heading">THE SCULPTURE</p>
+      <div><b>K1</b><span>Palimpsest</span><small>SOLVED</small></div>
+      <div><b>K2</b><span>Abscissa</span><small>SOLVED</small></div>
+      <div><b>K3</b><span>Transposition</span><small>SOLVED</small></div>
+      <div class="selected"><b>K4</b><span>97 letters</span><small>RESEARCH</small></div>
+      <div class="hypothesis"><b>K5</b><span>Explicit hypothesis</span><small>EXP</small></div>
+    </div>
+    <div class="sidebar-bottom"><div class="connection-card"><div><span id="connection-dot" class="dot offline"></span><strong id="connection-label">Connecting</strong></div><p id="device-description">Local compute engine</p><div class="connection-meta"><span id="cpu-label">CPU —</span><span id="version-label">LOCAL</span></div></div><p class="privacy-note">Local work. Reproducible evidence.<br>No search starts on launch.</p></div>
+  </aside>
+  <main id="main">
+    <header class="topbar"><span>RESEARCH <i>/</i> <strong id="page-label">WORKBENCH</strong></span><span class="local-badge"><span class="dot"></span> LOCAL WORKSPACE</span></header>
+    <div id="notification" class="notification" role="status" aria-live="polite" hidden><span id="notification-text"></span><button id="dismiss-notification" aria-label="Dismiss notification">×</button></div>
+    <section id="workbench-view" class="view">
+      <header class="page-heading"><div><p class="eyebrow">NINETY-SEVEN LETTERS. MANY POSSIBLE PATHS.</p><h1>The next passage.</h1><p class="lead">Build a hypothesis. Test its constraints. Inspect the evidence.</p></div><span id="session-status" class="status-chip"><span class="dot"></span><span id="session-label">Idle · ready when you are</span></span></header>
+      <div class="workbench-layout">
+        <section class="panel source-panel" aria-labelledby="source-title">
+          <div class="panel-heading"><div><p class="kicker">01 / SOURCE MATERIAL</p><h2 id="source-title">The ciphertext</h2></div><span class="tag" id="cipher-count">97 LETTERS</span></div>
+          <div class="segmented target-tabs" role="group" aria-label="Target passage"><button class="active" data-target="k4" aria-pressed="true"><strong>K4</strong><small>Fourth passage</small></button><button data-target="k5" aria-pressed="false"><strong>K5 <em>EXP</em></strong><small>Your hypothesis</small></button><button data-target="custom" aria-pressed="false"><strong>Custom</strong><small>Controlled experiment</small></button></div>
+          <p class="section-description" id="target-description">The fourth passage, with the 24 publicly released plaintext letters marked below.</p>
+          <div id="custom-source" hidden><label for="ciphertext">Hypothesis ciphertext</label><textarea id="ciphertext" rows="3" spellcheck="false" placeholder="Enter the exact A–Z ciphertext for your experiment"></textarea><p class="field-help">Spaces and punctuation are ignored. No authenticated K5 ciphertext is preloaded.</p><label for="hypothesis-note">Source and assumptions <span>optional</span></label><input id="hypothesis-note" type="text" maxlength="1000" placeholder="Where did this text come from?"></div>
+          <div class="cipher-toolbar"><span id="grid-caption">Ciphertext → known plaintext</span><div class="tiny-segmented" role="group" aria-label="Ciphertext layout"><button id="grid-readable" class="active" aria-pressed="true">Readable</button><button id="grid-sculpture" aria-pressed="false">Sculpture</button></div></div>
+          <div class="cipher-scroll"><div id="cipher-grid" class="cipher-grid" aria-label="Ciphertext and clue positions" aria-busy="true"><p class="empty-grid">Loading the public K4 source…</p></div></div>
+          <div class="cipher-legend"><span><i></i> Known plaintext</span><span id="selected-cell">Select a letter to inspect its position</span></div>
+          <div id="clue-chips" class="clue-chips"></div>
+          <details class="source-details"><summary>Edit plaintext clues <span id="crib-count">24 letters</span></summary><label for="cribs" class="sr-only">Plaintext clues, one-based position and text</label><textarea id="cribs" rows="4" spellcheck="false" placeholder="22:EAST&#10;26:NORTHEAST&#10;64:BERLIN&#10;70:CLOCK"></textarea><p class="field-help">One clue per line: <code>start:PLAINTEXT</code>. Positions start at 1. Conflicting or out-of-range clues are rejected.</p></details>
+          <div class="source-footnote"><span aria-hidden="true">◇</span><p>A model can fit every clue and still be wrong. Candidates remain unverified.</p></div>
+        </section>
+        <section class="panel recipe-panel" aria-labelledby="recipe-title">
+          <div class="panel-heading"><div><p class="kicker">02 / SEARCH RECIPE</p><h2 id="recipe-title">Choose your experiment</h2></div><span id="recipe-kind" class="tag">BOUNDED SEARCH</span></div>
+          <form id="search-form"><fieldset id="configuration-fields">
+            <label for="preset">Recipe preset</label><select id="preset"><option value="">Loading available recipes…</option></select><p id="preset-description" class="field-help preset-description">Choose a recorded cipher family and explicit search bounds.</p>
+            <div id="recipe-overview" class="recipe-overview" aria-label="Recipe overview"></div>
+            <div class="field-pair"><div><label for="backend">Compute backend</label><select id="backend"><option value="cpu">CPU</option><option value="cuda" disabled>NVIDIA CUDA · unavailable</option></select></div><div><label for="workers">CPU workers</label><select id="workers"><option>1</option><option selected>2</option><option>3</option><option>4</option></select></div></div>
+            <p id="backend-help" class="field-help">Hardware availability is reported by the local engine.</p>
+            <div id="preset-fields"></div>
+            <details class="advanced-settings" id="advanced-settings"><summary>Advanced recipe JSON <span aria-hidden="true">+</span></summary><p class="field-help">Edit the exact request for this preset. Source text and clues above are applied when you start.</p><label for="recipe-json" class="sr-only">Advanced recipe JSON</label><textarea id="recipe-json" class="json-editor" rows="10" spellcheck="false"></textarea><div class="editor-tools"><button type="button" class="text-button" id="format-json">Format JSON</button><button type="button" class="text-button" id="reset-recipe">Reset preset</button><span id="json-status" aria-live="polite"></span></div></details>
+          </fieldset><button type="submit" id="start-button" class="button primary" disabled><span aria-hidden="true">▶</span> Start experiment</button><p class="launch-note" id="launch-note">Starting runs only the displayed hypothesis and bounds.</p></form>
+        </section>
+        <section class="panel activity-panel" aria-labelledby="activity-title">
+          <div class="panel-heading"><div><p class="kicker">03 / LIVE EXECUTION</p><h2 id="activity-title">Search activity</h2></div><div class="run-actions"><button id="pause-button" class="button small" disabled>Pause</button><button id="stop-button" class="button small stop" disabled>Stop</button></div></div>
+          <div class="metrics"><div><span>Work completed</span><strong id="metric-completed">0</strong><small id="metric-unit">Awaiting a run</small></div><div><span>Throughput</span><strong id="metric-rate">—</strong><small id="rate-unit">per second</small></div><div><span>Elapsed</span><strong id="metric-elapsed">00:00</strong><small id="active-backend">No device active</small></div><div><span>Candidates</span><strong id="metric-candidates">0</strong><small>Unverified model fits</small></div></div>
+          <div class="progress-label"><span id="progress-label">No search has started.</span><span id="progress-value">—</span></div><progress id="run-progress" max="100" value="0" aria-label="Current search progress"></progress><div class="activity-footer"><span id="run-id">RUN / —</span><span id="last-update">Waiting for engine</span></div>
+          <p id="run-message" class="run-message" hidden></p>
+        </section>
+      </div>
+      <section id="results" class="panel results-panel" aria-labelledby="results-title"><div class="panel-heading"><div><p class="kicker">04 / INSPECT THE EVIDENCE</p><h2 id="results-title">Candidate results <span id="candidate-count" class="count-pill">0</span></h2></div><div class="run-actions"><button id="view-result-button" class="button small" disabled>Run details</button><button id="export-button" class="button small" disabled><span aria-hidden="true">↓</span> Export run</button></div></div>
+        <p class="results-note">Crib matches and re-encryption establish consistency with a recipe. They do not authenticate a Kryptos solution.</p>
+        <div id="result-summary" class="result-summary" hidden></div><div id="candidate-toolbar" class="candidate-toolbar" hidden><label for="candidate-filter" class="sr-only">Filter candidates by text, key or technique</label><input id="candidate-filter" type="search" placeholder="Filter text, keys, or techniques…"><span id="candidate-filter-count"></span></div>
+        <div id="candidate-list"><div class="empty-state"><div class="empty-symbol" aria-hidden="true">∴</div><h3>A place for the unexpected.</h3><p>Start an experiment to inspect candidates, exact model counts,<br>and the recipe behind every result.</p><span>NO RUN IN PROGRESS</span></div></div>
+      </section>
+    </section>
+    <section id="history-view" class="view" hidden><header class="page-heading"><div><p class="eyebrow">YOUR LOCAL RESEARCH RECORD</p><h1>Every path, preserved.</h1><p class="lead">Revisit the inputs, bounds and evidence from saved experiments.</p></div><button id="refresh-history" class="button">Refresh runs</button></header><div id="history-list" class="history-list"><div class="panel empty-state"><h3>No saved runs yet</h3><p>Your completed experiments will appear here.</p></div></div></section>
+    <section id="guide-view" class="view" hidden><header class="page-heading"><div><p class="eyebrow">EVIDENCE BEFORE CONCLUSIONS</p><h1>Know what a fit means.</h1><p class="lead">A practical guide to using this research workbench.</p></div></header><div class="guide-grid"><article class="panel guide-card"><span class="guide-number">01</span><h2>Start with a declared model</h2><p>A cipher, alphabet, route and key schedule define one hypothesis. A completed search applies only to its recorded bounds. An interrupted search cannot exclude the family.</p></article><article class="panel guide-card"><span class="guide-number">02</span><h2>Read candidates critically</h2><p>The public K4 clues constrain 24 of 97 letters. Even an exact fit and a successful re-encryption can leave many valid plaintexts. A language score is a ranking aid, never an authentication test.</p></article><article class="panel guide-card"><span class="guide-number">03</span><h2>Keep K5 assumptions explicit</h2><p>This workbench has no authenticated public K5 ciphertext preset. Supply and label your own hypothesis. K4 clues are not automatically transferred to K5.</p></article><article class="panel guide-card"><span class="guide-number">04</span><h2>Use the right compute path</h2><p>Exact constraint solvers run on the CPU. CUDA is available only for supported accelerated families when the local engine detects a compatible device. More workers or a GPU do not guarantee faster useful results.</p></article></div><section class="panel sources-panel"><div class="panel-heading"><h2>Source record</h2><span class="tag" id="sources-date">LOCAL RECORD</span></div><p id="knowledge-status" class="section-description"></p><div id="source-links" class="source-links"></div></section></section>
+    <footer><span>KRYPTOS RESEARCH WORKBENCH <i>/</i> LOCAL CPU + OPTIONAL CUDA</span><span>Independent project · no automatic submissions</span></footer>
+  </main>
+</div>
+<dialog id="run-dialog" aria-labelledby="dialog-title"><div class="dialog-heading"><div><p class="kicker">REPRODUCIBLE RESEARCH RECORD</p><h2 id="dialog-title">Run details</h2></div><button id="close-dialog" class="icon-button" aria-label="Close run details">×</button></div><p id="dialog-description" class="field-help"></p><pre id="run-json"></pre><div class="dialog-actions"><button id="copy-run" class="button">Copy JSON</button><button id="download-dialog" class="button primary">Download JSON</button></div></dialog>
+</body>
+</html>
