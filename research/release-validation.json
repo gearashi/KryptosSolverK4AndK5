@@ -4,7 +4,9 @@
   "date": "2026-10-13",
   "publication": {
     "repository": "https://github.com/gearashi/KryptosSolverK4AndK5",
-    "status": "prepared; remote verification pending"
+    "status": "published;remote main verified",
+    "verified_source_commit": "9e78a343abb985c9c32aaafdeb3335b077623ade",
+    "verification": "git ls-remote origin refs/heads/main equals local git rev-parse HEAD"
   },
   "fresh_checkout": {
     "method": "git checkout-index from curated staged content; project .venv used only as interpreter",
@@ -81,5 +83,15 @@
     "Time budget checked between waves;60second per-worker execution deadline",
     "No claim that no future improvement exists",
     "WindowsRTX2060/Python3.12.2hardwaretested; Unix launchers syntax/helpcheckedonly"
-  ]
+  ],
+  "launcher_smoke": {
+    "command": "OpenDashboard.ps1 -NoBrowser",
+    "version": "0.1.0",
+    "url": "http://127.0.0.1:8767/",
+    "api_status": {
+      "run": null
+    },
+    "actual_compiled_cuda_probe_ready": true,
+    "browser_panel": "open_in_codex queued local URL"
+  }
 }

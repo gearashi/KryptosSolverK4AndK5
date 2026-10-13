@@ -20,7 +20,8 @@
     "scope": "No remaining accepted actionable improvement after a complete post-integration review; usable local CPU/GPU app and reviewed publication package delivered.",
     "not_a_claim": "Global algorithmic optimality, exhaustive coverage of unknown Kryptos methods, or a verified decipherment.",
     "final_review_complete": true,
-    "publication_complete": false
+    "publication_complete": true,
+    "reviewed_actionable_backlog_complete": true
   },
   "entries": [
     {
@@ -187,9 +188,9 @@
     {
       "id": "I008",
       "title": "Curated reproducible publication package",
-      "status": "proposed",
+      "status": "validated",
       "decision": "accepted",
-      "stage": "curated-package-verified-awaiting-push",
+      "stage": "published-and-remote-verified",
       "owner": "root; sources inventory",
       "perspectives": [
         "reliability",
@@ -205,6 +206,10 @@
         {
           "path": "research/runs/release-L-002/fresh-checkout-tests.txt",
           "result": "Fresh index checkout:256 tests,255pass,one intentional optional raw-source skip; actualCUDA test executed; canonical manifests also validate against packaged bytes"
+        },
+        {
+          "path": "research/release-validation.json",
+          "result": "Published tested source commit9e78a343abb985c9c32aaafdeb3335b077623ade;git ls-remote matches local HEAD exactly"
         }
       ],
       "dependencies": [
@@ -520,5 +525,13 @@
       ],
       "remaining_delivery": "GitHub push and remote verification"
     }
-  ]
+  ],
+  "delivery": {
+    "repository": "https://github.com/gearashi/KryptosSolverK4AndK5",
+    "verified_source_commit": "9e78a343abb985c9c32aaafdeb3335b077623ade",
+    "local_url": "http://127.0.0.1:8767/",
+    "startup": "OpenDashboard.cmd",
+    "state_at_delivery": "Idle;CUDA readiness probe succeeded;no search running",
+    "remaining": "Deferred I005 needs a measured duplicate-family bank workflow. K4/K5 remain unresolved research targets."
+  }
 }
