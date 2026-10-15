@@ -1,5 +1,7 @@
 # Publication inventory and draft third-party notices
 
+Current licensing update (2026-10-15): project-authored software and documentation are now licensed under [GPL-3.0-only](../LICENSE), copyright (C) 2026 gearashi. The review below records the earlier packaging decision; statements that no project license had been chosen describe that earlier state. Third-party materials retain their own terms.
+
 Reviewed on 2026-10-13 for the proposed `gearashi/KryptosSolverK4AndK5` publication. This is an inventory and packaging recommendation, not a grant of third-party rights or a choice of license for the user's code. No project license was present at the start of this review. Keep any later code-license decision separate from source-data attribution.
 
 ## Primary-source findings

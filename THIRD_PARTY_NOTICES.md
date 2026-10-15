@@ -1,6 +1,6 @@
 # Third-party notices
 
-This project is an independent research toolkit. No affiliation or endorsement by James Sanborn, the Central Intelligence Agency, Paradigm, Project Gutenberg, NVIDIA, or cited researchers is implied. This notice does not choose a license for the project code or grant rights to third-party works.
+This project is an independent research toolkit. No affiliation or endorsement by James Sanborn, the Central Intelligence Agency, Paradigm, Project Gutenberg, NVIDIA, or cited researchers is implied. Project-authored software and documentation are licensed under [GPL-3.0-only](LICENSE), copyright (C) 2026 gearashi. This license does not grant rights to third-party works; their notices and terms remain applicable.
 
 ## Kryptos reference data
 
